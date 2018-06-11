@@ -11,7 +11,8 @@ import horovod.torch as hvd
 import torch.optim
 import logging
 from utils import *
-from hvd_utils.DGCLSTMoptimizer import DGCLSTMDistributedOptimizer
+#from hvd_utils.DGCLSTMoptimizer_thd import DGCLSTMDistributedOptimizer
+from hvd_utils.DGCLSTMoptimizer_2D import DGCLSTMDistributedOptimizer
 
 import data
 import model
@@ -45,6 +46,8 @@ parser.add_argument('--dropout', type=float, default=0.2,
                     help='dropout applied to layers (0 = no dropout)')
 parser.add_argument('--tied', action='store_true',
                     help='tie the word embedding and softmax weights')
+parser.add_argument('--gpus', default='0',
+                    help='gpus used for training - e.g 0,1,3')
 parser.add_argument('--seed', type=int, default=1111,
                     help='random seed')
 parser.add_argument('--cuda', action='store_true',
@@ -60,11 +63,17 @@ parser.add_argument('--use_pruning', dest='use_pruning', action='store_true',
 parser.add_argument('--no_use_pruning', dest='use_pruning', action='store_false',
                             help='do not use gradient pruning')
 parser.set_defaults(use_pruning=False)
+
+parser.add_argument('--use_cluster', dest='use_cluster', action='store_true',
+                            help='synchronize all parameters every sync_interval steps')
+parser.add_argument('--no_use_cluster', dest='use_cluster', action='store_false',
+                            help='synchronize all parameters every sync_interval steps')
+parser.set_defaults(use_cluster=False)
+
 args = parser.parse_args()
 
 # Set the random seed manually for reproducibility.
 hvd.init()
-torch.cuda.set_device(hvd.local_rank())
 torch.manual_seed(args.seed + hvd.local_rank())
 
 if torch.cuda.is_available():
@@ -72,6 +81,19 @@ if torch.cuda.is_available():
         print("WARNING: You have a CUDA device, so you should probably run with --cuda")
 
 device = torch.device("cuda" if args.cuda else "cpu")
+
+if args.cuda:
+    args.gpus = [int(i) for i in args.gpus.split(',')]
+    if args.use_cluster:
+        torch.cuda.set_device(0)
+    else:
+        if(hvd.local_rank() < len(args.gpus)):
+            print("rank, ", hvd.local_rank(), " is runing on ", args.gpus[hvd.local_rank()])
+            torch.cuda.set_device(args.gpus[hvd.local_rank()])
+        else:
+            print("rank, ", hvd.local_rank(), " is runing on ", args.gpus[0])
+            torch.cuda.set_device(args.gpus[0])
+torch.cuda.set_device(hvd.local_rank())
 
 ###############################################################################
 # Load data
@@ -176,6 +198,13 @@ def train(optimizer, best_val_loss):
         lr = param_group['lr']
     T_dim_size = train_data.size(0) - 1
     data_offset = T_dim_size // hvd.size() * hvd.local_rank()
+
+    batch_time = AverageMeter()
+    pruning_time = AverageMeter()
+    select_time = AverageMeter()
+    comm_time = AverageMeter()
+
+    end = time.time()
     for batch, i in enumerate(range(0, T_dim_size//hvd.size(), args.bptt)):
         data, targets = get_batch(train_data, i + data_offset)
         # Starting each batch, we detach the hidden state from how it was previously produced.
@@ -193,20 +222,34 @@ def train(optimizer, best_val_loss):
             optimizer.synchronize()
             torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip)
 
+        if args.use_pruning:
+            pruning_time.update(optimizer.pruning_time)
+            select_time.update(optimizer.select_time)
+            comm_time.update(optimizer.comm_time)
+            optimizer.pruning_time = 0.0
+            optimizer.select_time = 0.0
+            optimizer.comm_time = 0.0
+
         optimizer.step()
         # for p in model.parameters():
         #     p.data.add_(-lr, p.grad.data)
 
         total_loss += loss.item()
 
+        batch_time.update(time.time() - end)
+        end = time.time()
+
         if batch % args.log_interval == 0 and batch > 0:
             cur_loss = total_loss / args.log_interval
             elapsed = time.time() - start_time
             if hvd.local_rank() == 0:
                 print('| epoch {:3d} | {:5d}/{:5d} batches | lr {:02.2f} | ms/batch {:5.2f} | '
-                        'loss {:5.2f} | ppl {:8.2f}'.format(
+                        'loss {:5.2f} | ppl {:8.2f} | '
+                        'Time {:.3f} | pruning time {:.3f} | select time {:3f} | '
+                        'comm time {:3f}'.format(
                     epoch, batch, len(train_data) // args.bptt, lr,
-                    elapsed * 1000 / args.log_interval, cur_loss, math.exp(cur_loss)))
+                    elapsed * 1000 / args.log_interval, cur_loss, math.exp(cur_loss),
+                        batch_time.val, pruning_time.val, select_time.val, comm_time.val))
             total_loss = 0
             start_time = time.time()
 
@@ -254,6 +297,8 @@ try:
             optimizer = DGCLSTMDistributedOptimizer(optimizer, named_parameters=model.named_parameters(), use_gpu=True, momentum=0.0, weight_decay=0.0)
     # Broadcast parameters from rank 0 to all other processes.
     hvd.broadcast_parameters(model.state_dict(), root_rank=0)
+
+    global_begin_time = time.time()
     for epoch in range(1, args.epochs+1):
         epoch_start_time = time.time()
         optimizer, best_val_loss = train(optimizer, best_val_loss)
@@ -278,7 +323,8 @@ try:
                 param_group['lr'] = param_group['lr'] / 4.0
 
         if(hvd.local_rank() == 0):
-            results.add(epoch=epoch, val_loss=val_loss, val_ppl=math.exp(val_loss))
+            current_time = time.time() - global_begin_time
+            results.add(epoch=epoch, val_loss=val_loss, val_ppl=math.exp(val_loss), eslapes=current_time)
             results.save()
 
 except KeyboardInterrupt:

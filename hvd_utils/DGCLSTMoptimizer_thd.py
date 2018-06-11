@@ -19,7 +19,7 @@ from horovod.torch.mpi_ops import allgather, allgather_async, _allgather_async
 from horovod.torch.mpi_ops import broadcast, broadcast_async, broadcast_, broadcast_async_
 from horovod.torch.mpi_ops import poll, synchronize
 import numpy as np
-from .pruning import select_top_k_thd, select_top_k_appr, check_sparsity, select_top_k_thdv3 
+from .pruning import select_top_k_thd, select_top_k_appr, check_sparsity, select_top_k_thdv3, select_top_k_thd_less
 import horovod.torch as hvd
 
 import torch
@@ -104,17 +104,18 @@ class _DGCOptimizer(torch.optim.Optimizer):
                 #print("p_flatten size is ,", p_flatten.size())
                 #print("compressed msg, ", self._compressed_msg[name], 'rank, ', hvd.local_size())
                 #print("hand is ", handle)
+                offset = 0
                 for node_idx in range(hvd.size()):
                     if self._use_gpu:
-                        p_flatten[self._compressed_msg[name][node_idx*msg_size*2 : \
-                                node_idx*msg_size*2 + msg_size].type('torch.cuda.LongTensor')] += \
-                                self._compressed_msg[name][node_idx*msg_size*2 + msg_size : \
-                                node_idx*msg_size*2 + 2*msg_size]
+                        msg_size = self._compressed_msg[name][offset].type('torch.cuda.LongTensor')
+                        offset += 1
+                        p_flatten[self._compressed_msg[name][ offset: \
+                            offset + msg_size].type('torch.cuda.LongTensor')] += \
+                           self._compressed_msg[name][offset + msg_size : \
+                           offset + 2*msg_size]
+                        offset += msg_size * 2;
                     else:
-                        p_flatten[self._compressed_msg[name][node_idx*msg_size*2 : \
-                                node_idx*msg_size*2 + msg_size].type('torch.LongTensor')] += \
-                                self._compressed_msg[name][node_idx*msg_size*2 + msg_size : \
-                                node_idx*msg_size*2 + 2*msg_size]
+                        pass
 
                 p.grad.data = p.grad.data.view(g_size)
                 if self._debug:
@@ -135,7 +136,7 @@ class _DGCOptimizer(torch.optim.Optimizer):
                 p.grad.data.add_(torch.mul(p.data, self._weight_decay))
                 p.grad.data.div_(hvd.size())
 
-            torch.nn.utils.clip_grad_norm(group['params'], 0.25 * hvd.size() ** -0.5)
+            torch.nn.utils.clip_grad_norm_(group['params'], 0.25 * hvd.size() ** -0.5)
             #torch.nn.utils.clip_grad_norm(group['params'], 0.25)
             #weight_decay = group['weight_decay']
             #momentum = group['momentum']
@@ -163,7 +164,13 @@ class _DGCOptimizer(torch.optim.Optimizer):
 
                     torch.cuda.synchronize()
                     begin_select_time =  time.time()
-                    self._masks[name], compressed_val, compressed_idx = select_top_k_thd(self._V[name], 0.001, self._masks[name])
+                    compressed_val, compressed_idx = select_top_k_thdv3(self._V[name], 0.001)
+                    masks_size = self._masks[name].size()
+                    self._masks[name].zero_()
+                    self._masks[name] = self._masks[name].view(-1)
+                    self._masks[name][compressed_idx] = 1.0
+                    self._masks[name] = 1.0 - self._masks[name]
+                    self._masks[name] = self._masks[name].view(masks_size)
                     torch.cuda.synchronize()
                     end_select_time =  time.time()
                     self.select_time += end_select_time - begin_select_time
@@ -178,14 +185,22 @@ class _DGCOptimizer(torch.optim.Optimizer):
 
                     torch.cuda.synchronize()
                     begin_comm_time =  time.time()
+
                     self._compressed_msg_size[name] = len(compressed_idx)
                     if self._use_gpu:
-                        compressed_msg = torch.cat([compressed_idx.type('torch.cuda.FloatTensor'), compressed_val])
+                        compressed_msg = torch.cat([\
+                            torch.tensor([len(compressed_idx)]).type('torch.cuda.FloatTensor'),\
+                            compressed_idx.type('torch.cuda.FloatTensor'), \
+                            compressed_val])
                     else:
-                        compressed_msg = torch.cat([compressed_idx.type('torch.FloatTensor'), compressed_val])
+                        pass
 
                     handle = _allgather_async(compressed_msg, self._compressed_msg[name], name=name)
                     self._handles[p] = handle
+
+                    torch.cuda.synchronize()
+                    self.comm_time += time.time() - begin_comm_time
+
                 else:
                     p.grad.data.add_(torch.mul(p.data, self._weight_decay))
                     if self._use_nesterov:
@@ -199,9 +214,6 @@ class _DGCOptimizer(torch.optim.Optimizer):
                     #handle = _allgather_async(compressed_msg, self._compressed_msg[name], name=name)
                     handle = allreduce_async_(p.grad.data, average=True, name=name)
                     self._handles[p] = handle
-
-                    torch.cuda.synchronize()
-                    self.comm_time += time.time() - begin_comm_time
 
             torch.cuda.synchronize()
             end_time = time.time()
