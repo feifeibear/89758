@@ -11,8 +11,8 @@ import horovod.torch as hvd
 import torch.optim
 import logging
 from utils import *
-#from hvd_utils.DGCLSTMoptimizer_thd import DGCLSTMDistributedOptimizer
-from hvd_utils.DGCLSTMoptimizer_2D import DGCLSTMDistributedOptimizer
+from hvd_utils.DGCLSTMoptimizer_thd import DGCLSTMDistributedOptimizer
+#from hvd_utils.DGCLSTMoptimizer_2D import DGCLSTMDistributedOptimizer
 
 import data
 import model
