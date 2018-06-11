@@ -19,7 +19,7 @@ from horovod.torch.mpi_ops import allgather, allgather_async, _allgather_async
 from horovod.torch.mpi_ops import broadcast, broadcast_async, broadcast_, broadcast_async_
 from horovod.torch.mpi_ops import poll, synchronize
 import numpy as np
-from .pruning import select_top_k_thd, select_top_k_appr, check_sparsity, select_top_k_thdv3, select_top_k_thd_less
+from .pruning import select_top_k_thd, select_top_k_appr, check_sparsity, select_top_k_thdv3
 import horovod.torch as hvd
 
 import torch
