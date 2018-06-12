@@ -164,7 +164,7 @@ class _DGCOptimizer(torch.optim.Optimizer):
 
                     torch.cuda.synchronize()
                     begin_select_time =  time.time()
-                    compressed_val, compressed_idx = select_top_k_thdv3(self._V[name], 0.001)
+                    compressed_val, compressed_idx = select_top_k_thdv3(self._V[name], 0.001, 0.3)
                     masks_size = self._masks[name].size()
                     self._masks[name].zero_()
                     self._masks[name] = self._masks[name].view(-1)
