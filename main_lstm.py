@@ -243,7 +243,7 @@ def train(optimizer, best_val_loss):
             cur_loss = total_loss / args.log_interval
             elapsed = time.time() - start_time
             if hvd.rank() == 0:
-                print('| epoch {:3d} | {:5d}/{:5d} batches | lr {:02.2f} | ms/batch {:5.2f} | '
+                logging.info('| epoch {:3d} | {:5d}/{:5d} batches | lr {:02.2f} | ms/batch {:5.2f} | '
                         'loss {:5.2f} | ppl {:8.2f} | '
                         'Time {:.3f} | pruning time {:.3f} | select time {:3f} | '
                         'comm time {:3f}'.format(
@@ -283,7 +283,7 @@ try:
         results = ResultsLog(results_file % 'csv', results_file % 'html')
         num_parameters = sum([l.nelement() for l in model.parameters()])
         logging.info("number of parameters: %d", num_parameters)
-        print({i: list(w.size())
+        logging.info({i: list(w.size())
             for (i, w) in enumerate(list(model.parameters()))})
 
     optimizer = torch.optim.SGD(model.parameters(), lr=lr)
@@ -304,11 +304,11 @@ try:
         optimizer, best_val_loss = train(optimizer, best_val_loss)
         val_loss = evaluate(val_data)
         if hvd.rank() == 0:
-            print('-' * 89)
-            print('| end of epoch {:3d} | time: {:5.2f}s | valid loss {:5.2f} | '
+            logging.info('-' * 89)
+            logging.info('| end of epoch {:3d} | time: {:5.2f}s | valid loss {:5.2f} | '
                     'valid ppl {:8.2f}'.format(epoch, (time.time() - epoch_start_time),
                                                val_loss, math.exp(val_loss)))
-            print('-' * 89)
+            logging.info('-' * 89)
         # Save the model if the validation loss is the best we've seen so far.
         if not best_val_loss or val_loss < best_val_loss:
             if not os.path.exists(args.save):
@@ -328,8 +328,8 @@ try:
             results.save()
 
 except KeyboardInterrupt:
-    print('-' * 89)
-    print('Exiting from training early')
+    logging.info('-' * 89)
+    logging.info('Exiting from training early')
 
 if hvd.rank() == 0:
     # Load the best saved model.
@@ -342,10 +342,10 @@ if hvd.rank() == 0:
 
     # Run on test data.
     test_loss = evaluate(test_data)
-    print('=' * 89)
-    print('| End of training | test loss {:5.2f} | test ppl {:8.2f}'.format(
+    logging.info('=' * 89)
+    logging.info('| End of training | test loss {:5.2f} | test ppl {:8.2f}'.format(
         test_loss, math.exp(test_loss)))
-    print('=' * 89)
+    logging.info('=' * 89)
 
     if len(args.onnx_export) > 0:
         # Export the model in ONNX format.
