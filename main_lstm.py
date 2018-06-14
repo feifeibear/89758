@@ -74,7 +74,7 @@ args = parser.parse_args()
 
 # Set the random seed manually for reproducibility.
 hvd.init()
-torch.manual_seed(args.seed + hvd.local_rank())
+torch.manual_seed(args.seed + hvd.rank())
 
 if torch.cuda.is_available():
     if not args.cuda:
@@ -197,7 +197,7 @@ def train(optimizer, best_val_loss):
     for param_group in optimizer.param_groups:
         lr = param_group['lr']
     T_dim_size = train_data.size(0) - 1
-    data_offset = T_dim_size // hvd.size() * hvd.local_rank()
+    data_offset = T_dim_size // hvd.size() * hvd.rank()
 
     batch_time = AverageMeter()
     pruning_time = AverageMeter()
@@ -242,7 +242,7 @@ def train(optimizer, best_val_loss):
         if batch % args.log_interval == 0 and batch > 0:
             cur_loss = total_loss / args.log_interval
             elapsed = time.time() - start_time
-            if hvd.local_rank() == 0:
+            if hvd.rank() == 0:
                 print('| epoch {:3d} | {:5d}/{:5d} batches | lr {:02.2f} | ms/batch {:5.2f} | '
                         'loss {:5.2f} | ppl {:8.2f} | '
                         'Time {:.3f} | pruning time {:.3f} | select time {:3f} | '
@@ -271,13 +271,13 @@ try:
         args.save_dir = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
     save_path = os.path.join(args.results_dir, args.save_dir)
     if not os.path.exists(save_path):
-        if hvd.local_rank() == 0:
+        if hvd.rank() == 0:
             os.makedirs(save_path)
 
     results_file = os.path.join('./Results/', 'results.%s')
     results = ResultsLog(results_file % 'csv', results_file % 'html')
 
-    if hvd.local_rank() == 0:
+    if hvd.rank() == 0:
         setup_logging(os.path.join(save_path, 'log.txt'))
         results_file = os.path.join(save_path, 'results.%s')
         results = ResultsLog(results_file % 'csv', results_file % 'html')
@@ -303,7 +303,7 @@ try:
         epoch_start_time = time.time()
         optimizer, best_val_loss = train(optimizer, best_val_loss)
         val_loss = evaluate(val_data)
-        if hvd.local_rank() == 0:
+        if hvd.rank() == 0:
             print('-' * 89)
             print('| end of epoch {:3d} | time: {:5.2f}s | valid loss {:5.2f} | '
                     'valid ppl {:8.2f}'.format(epoch, (time.time() - epoch_start_time),
@@ -322,7 +322,7 @@ try:
             for param_group in optimizer.param_groups:
                 param_group['lr'] = param_group['lr'] / 4.0
 
-        if(hvd.local_rank() == 0):
+        if(hvd.rank() == 0):
             current_time = time.time() - global_begin_time
             results.add(epoch=epoch, val_loss=val_loss, val_ppl=math.exp(val_loss), eslapes=current_time)
             results.save()
@@ -331,7 +331,7 @@ except KeyboardInterrupt:
     print('-' * 89)
     print('Exiting from training early')
 
-if hvd.local_rank() == 0:
+if hvd.rank() == 0:
     # Load the best saved model.
     model_file = os.path.join(args.save, 'model.pt')
     with open(model_file, 'rb') as f:
