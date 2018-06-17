@@ -19,7 +19,7 @@ from horovod.torch.mpi_ops import allgather, allgather_async, _allgather_async
 from horovod.torch.mpi_ops import broadcast, broadcast_async, broadcast_, broadcast_async_
 from horovod.torch.mpi_ops import poll, synchronize
 import numpy as np
-from .pruning import select_top_k_thd, select_top_k_appr, check_sparsity, select_top_k_thdv3
+from .pruning import select_top_k_thd, select_top_k_appr, check_sparsity, select_top_k_thdv3, select_top_k_fixthd
 import horovod.torch as hvd
 
 import torch
@@ -79,6 +79,7 @@ class _DGCOptimizer(torch.optim.Optimizer):
 
         self._handles = {}
         self._grad_accs = []
+        self._interval = 20
 
         self.pruning_time = 0.0
         self.select_time = 0.0
@@ -150,6 +151,7 @@ class _DGCOptimizer(torch.optim.Optimizer):
                 name = self._parameter_names.get(p)
                 p_size = np.prod(p.size())
                 if self._use_allgather and p_size > 1024:
+                    param_state = self.state[p]
                     # fjr compress grad
                     if self._use_nesterov:
                         self._U[name] = torch.mul(torch.add(self._U[name], p.grad.data), self._momentum)
@@ -164,7 +166,20 @@ class _DGCOptimizer(torch.optim.Optimizer):
 
                     torch.cuda.synchronize()
                     begin_select_time =  time.time()
-                    compressed_val, compressed_idx = select_top_k_thdv3(self._V[name], 0.001, 0.3)
+                    if 'mid_store' not in param_state:
+                        param_state['mid_store'] = 0.0
+                    if 'interval' not in param_state:
+                        param_state['interval'] = self._interval
+                    compressed_val = []
+                    compressed_idx = []
+                    if param_state['interval'] == self._interval:
+                        compressed_val, compressed_idx, it, param_state['mid_store'], sparsity = \
+                            select_top_k_thdv3(self._V[name], 0.001)
+                        param_state['interval'] = 0
+                    else:
+                        compressed_val, compressed_idx, sparsity = \
+                            select_top_k_fixthd(self._V[name], param_state['mid_store'])
+                        param_state['interval'] += 1
                     masks_size = self._masks[name].size()
                     self._masks[name].zero_()
                     self._masks[name] = self._masks[name].view(-1)
