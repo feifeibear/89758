@@ -11,7 +11,6 @@ import horovod.torch as hvd
 import torch.optim
 import logging
 from utils import *
-from hvd_utils.DGCLSTMoptimizer_thd import DGCLSTMDistributedOptimizer
 #from hvd_utils.DGCLSTMoptimizer_2D import DGCLSTMDistributedOptimizer
 
 import data
@@ -70,7 +69,17 @@ parser.add_argument('--no_use_cluster', dest='use_cluster', action='store_false'
                             help='synchronize all parameters every sync_interval steps')
 parser.set_defaults(use_cluster=False)
 
+parser.add_argument('--pruning_mode', '-pm', default=0, type=int,
+                            help='prune mode')
+
 args = parser.parse_args()
+
+if args.pruning_mode == 1:
+    from hvd_utils.DGCLSTMoptimizer_thd import DGCLSTMDistributedOptimizer
+elif args.pruning_mode == 3:
+    from hvd_utils.DGCLSTMoptimizer import DGCLSTMDistributedOptimizer
+elif args.pruning_mode == 7:
+    from hvd_utils.DGCLSTMoptimizer_quant import DGCLSTMDistributedOptimizer
 
 # Set the random seed manually for reproducibility.
 hvd.init()
