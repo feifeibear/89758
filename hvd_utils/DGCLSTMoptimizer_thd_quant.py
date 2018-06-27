@@ -59,7 +59,7 @@ class _DGCOptimizer(torch.optim.Optimizer):
                                      in sorted(named_parameters)}
             self._masks = {k: torch.zeros(v.size()).cuda() for k, v
                                      in sorted(named_parameters)}
-            self._compressed_idx = {k: torch.zeros(0, dtype = tensor.long).cuda() for k, v
+            self._compressed_idx = {k: torch.zeros(0, dtype = torch.long).cuda() for k, v
                                  in sorted(named_parameters)}
             self._compressed_val = {k: torch.zeros(0).cuda() for k, v
                                  in sorted(named_parameters)}
