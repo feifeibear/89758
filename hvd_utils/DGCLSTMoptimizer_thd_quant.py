@@ -19,7 +19,7 @@ from horovod.torch.mpi_ops import allgather, allgather_async, _allgather_async
 from horovod.torch.mpi_ops import broadcast, broadcast_async, broadcast_, broadcast_async_
 from horovod.torch.mpi_ops import poll, synchronize
 import numpy as np
-from .pruning import select_top_k_thd, select_top_k_appr, check_sparsity, select_top_k_thdv3, select_top_k_fixthd
+from .pruning import select_bs_top, select_bs_bottom 
 import horovod.torch as hvd
 
 import torch
@@ -176,7 +176,7 @@ class _DGCOptimizer(torch.optim.Optimizer):
                         param_state['interval'] = 0
                     else:
                         compressed_val, compressed_idx, _, _, _ = \
-                            select_bs_top(self._V[name], 0.001)
+                            select_bs_bottom(self._V[name], 0.001)
                         param_state['interval'] += 1
 
                     masks_size = self._masks[name].size()
