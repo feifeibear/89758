@@ -55,8 +55,6 @@ class _DGCOptimizer(torch.optim.Optimizer):
                                      in sorted(named_parameters)}
             self._U = {k: torch.zeros(v.size()).cuda() for k, v
                                      in sorted(named_parameters)}
-            self._U = {k: torch.zeros(v.size()).cuda() for k, v
-                                     in sorted(named_parameters)}
             self._masks = {k: torch.zeros(v.size()).cuda() for k, v
                                      in sorted(named_parameters)}
             self._compressed_val = {k: torch.zeros(0).cuda() for k, v
@@ -65,8 +63,6 @@ class _DGCOptimizer(torch.optim.Optimizer):
                                  in sorted(named_parameters)}
         else:
             self._V = {k: torch.zeros(v.size()) for k, v
-                                     in sorted(named_parameters)}
-            self._U = {k: torch.zeros(v.size()) for k, v
                                      in sorted(named_parameters)}
             self._U = {k: torch.zeros(v.size()) for k, v
                                      in sorted(named_parameters)}
@@ -82,6 +78,7 @@ class _DGCOptimizer(torch.optim.Optimizer):
                                  in sorted(named_parameters)}
 
         self._handles = {}
+        self._handles_val = {}
         self._grad_accs = []
 
         self.pruning_time = 0.0
@@ -108,7 +105,7 @@ class _DGCOptimizer(torch.optim.Optimizer):
                 p_flatten.zero_()
                 for node_idx in range(hvd.size()):
                     if self._use_gpu:
-                        p_flatten[self._compressed_msg[name][node_idx*msg_size : \
+                        p_flatten[self._compressed_idx[name][node_idx*msg_size : \
                                 node_idx*msg_size*2]] += \
                                 self._compressed_val[name][node_idx]
 
@@ -148,7 +145,6 @@ class _DGCOptimizer(torch.optim.Optimizer):
                 name = self._parameter_names.get(p)
                 p_size = np.prod(p.size())
                 if self._use_allgather and p_size > 1024:
-                    # fjr compress grad
                     if self._momentum != 0:
                         if self._use_nesterov:
                             self._U[name] = torch.mul(torch.add(self._U[name], p.grad.data), self._momentum)
@@ -157,7 +153,7 @@ class _DGCOptimizer(torch.optim.Optimizer):
                             self._U[name] = self._momentum * self._U[name] + p.grad.data
                             self._V[name] = self._V[name] + self._U[name]
                     else:
-                        self._V[name] = p.grad.data
+                        self._V[name].add_(p.grad.data)
                     compressed_val = []
                     compressed_idx = []
 
@@ -166,11 +162,11 @@ class _DGCOptimizer(torch.optim.Optimizer):
                     if self._flag[name] == 0:
                         self._masks[name], compressed_val, compressed_idx = \
                                 select_lowk_truncated_mean(self._V[name], 0.001, self._masks[name])
-                        self._flag = 1
+                        self._flag[name] = 1
                     else:
                         self._masks[name], compressed_val, compressed_idx = \
                                 select_topk_truncated_mean(self._V[name], 0.001, self._masks[name])
-                        self._flag = 0
+                        self._flag[name] = 0
 
                     torch.cuda.synchronize()
                     end_select_time =  time.time()
@@ -200,7 +196,10 @@ class _DGCOptimizer(torch.optim.Optimizer):
                         else:
                             self._U[name] = self._momentum * self._U[name] + p.grad.data
                             self._V[name] = self._V[name] + self._U[name]
-                        p.grad.data = self._V[name]
+                    else:
+                        self._V[name].add_(p.grad.data())
+
+                    p.grad.data = self._V[name]
                     #compressed_msg = torch.randn(100).cuda()
                     #handle = _allgather_async(compressed_msg, self._compressed_msg[name], name=name)
                     handle = allreduce_async_(p.grad.data, average=True, name=name)
