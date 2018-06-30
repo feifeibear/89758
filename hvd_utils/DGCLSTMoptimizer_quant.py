@@ -106,7 +106,7 @@ class _DGCOptimizer(torch.optim.Optimizer):
                 for node_idx in range(hvd.size()):
                     if self._use_gpu:
                         p_flatten[self._compressed_idx[name][node_idx*msg_size : \
-                                node_idx*msg_size*2]] += \
+                                node_idx*msg_size + msg_size]] += \
                                 self._compressed_val[name][node_idx]
 
                 p.grad.data = p.grad.data.view(g_size)
@@ -176,7 +176,8 @@ class _DGCOptimizer(torch.optim.Optimizer):
                         allreduce_(self._v_ref[name], average = False)
 
                     self._V[name].mul_(self._masks[name])
-                    self._U[name].mul_(self._masks[name])
+                    if self._momentum == 0:
+                        self._U[name].mul_(self._masks[name])
 
                     torch.cuda.synchronize()
                     begin_comm_time =  time.time()
