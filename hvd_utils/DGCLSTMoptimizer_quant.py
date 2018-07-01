@@ -198,11 +198,14 @@ class _DGCOptimizer(torch.optim.Optimizer):
                             self._U[name] = self._momentum * self._U[name] + p.grad.data
                             self._V[name] = self._V[name] + self._U[name]
                     else:
-                        self._V[name].add_(p.grad.data())
+                        self._V[name].add_(p.grad.data)
 
                     p.grad.data = self._V[name]
                     #compressed_msg = torch.randn(100).cuda()
                     #handle = _allgather_async(compressed_msg, self._compressed_msg[name], name=name)
+                    torch.cuda.synchronize()
+                    begin_comm_time =  time.time()
+
                     handle = allreduce_async_(p.grad.data, average=True, name=name)
                     self._handles[p] = handle
 

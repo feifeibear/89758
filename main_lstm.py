@@ -71,6 +71,11 @@ parser.set_defaults(use_cluster=False)
 
 parser.add_argument('--pruning_mode', '-pm', default=0, type=int,
                             help='prune mode')
+parser.add_argument('--use_warmup', dest='use_warmup', action='store_true',
+                    help='use warm up')
+parser.add_argument('--no_use_warmup', dest='use_warmup', action='store_false',
+                    help='do not use warm up')
+parser.set_defaults(use_warmup=False)
 
 args = parser.parse_args()
 
@@ -82,6 +87,9 @@ elif args.pruning_mode == 7:
     from hvd_utils.DGCLSTMoptimizer_quant import DGCLSTMDistributedOptimizer
 elif args.pruning_mode == 8:
     from hvd_utils.DGCLSTMoptimizer_thd_quant import DGCLSTMDistributedOptimizer
+
+if hvd.rank():
+    print("pruning_mode is ", args.pruning_mode)
 
 # Set the random seed manually for reproducibility.
 hvd.init()
@@ -311,6 +319,11 @@ try:
 
     global_begin_time = time.time()
     for epoch in range(1, args.epochs+1):
+        if args.use_warmup:
+            if epoch == 1:
+                optimizer._use_allgather = False
+            else:
+                optimizer._use_allgather = True
         epoch_start_time = time.time()
         optimizer, best_val_loss = train(optimizer, best_val_loss)
         val_loss = evaluate(val_data)
