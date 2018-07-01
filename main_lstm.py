@@ -88,13 +88,14 @@ elif args.pruning_mode == 7:
 elif args.pruning_mode == 8:
     from hvd_utils.DGCLSTMoptimizer_thd_quant import DGCLSTMDistributedOptimizer
 
-if hvd.rank():
-    print("pruning_mode is ", args.pruning_mode)
 
 # Set the random seed manually for reproducibility.
 hvd.init()
 torch.manual_seed(args.seed + hvd.rank())
 
+
+if hvd.rank() == 0:
+    print("pruning_mode is ", args.pruning_mode)
 if torch.cuda.is_available():
     if not args.cuda:
         print("WARNING: You have a CUDA device, so you should probably run with --cuda")
