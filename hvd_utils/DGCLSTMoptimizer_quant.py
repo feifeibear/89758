@@ -159,14 +159,38 @@ class _DGCOptimizer(torch.optim.Optimizer):
 
                     torch.cuda.synchronize()
                     begin_select_time =  time.time()
-                    if self._flag[name] == 0:
-                        self._masks[name], compressed_val, compressed_idx = \
-                                select_lowk_truncated_mean(self._V[name], 0.001, self._masks[name])
-                        self._flag[name] = 1
+
+
+                    self._masks[name], compressed_val, compressed_idx = select_top_k_thd(self._V[name], 0.001, self._masks[name])
+                    #if self._flag[name] == 0:
+                    #    self._masks[name], compressed_val, compressed_idx = \
+                    #            select_lowk_truncated_mean(self._V[name], 0.001, self._masks[name])
+                    #    self._flag[name] = 1
+                    #else:
+                    #    self._masks[name], compressed_val, compressed_idx = \
+                    #            select_topk_truncated_mean(self._V[name], 0.001, self._masks[name])
+                    #    self._flag[name] = 0
+                    compressed_val_low, compressed_idx_low = \
+                            select_lowk_truncated_mean(self._V[name], 0.001)
+                    compressed_val_top, compressed_idx_top = \
+                            select_topk_truncated_mean(self._V[name], 0.001)
+                    compressed_mean = 0
+                    if(-torch.mean(compressed_val_low) > torch.mean(compressed_val_top)):
+                        compressed_val = compressed_val_low
+                        compressed_idx = compressed_idx_low
+                        compressed_mean = torch.mean(compressed_val_low)
                     else:
-                        self._masks[name], compressed_val, compressed_idx = \
-                                select_topk_truncated_mean(self._V[name], 0.001, self._masks[name])
-                        self._flag[name] = 0
+                        compressed_val = compressed_val_top
+                        compressed_idx = compressed_idx_top
+                        compressed_mean = torch.mean(compressed_val_top)
+
+                    masks_size = self._masks[name].size()
+                    self._masks[name].zero_()
+                    self._masks[name] = self._masks[name].view(-1)
+                    self._masks[name][compressed_idx] = 1.0
+                    self._masks[name] = 1.0 - self._masks[name]
+                    self._masks[name] = self._masks[name].view(masks_size)
+
 
                     torch.cuda.synchronize()
                     end_select_time =  time.time()
@@ -176,7 +200,7 @@ class _DGCOptimizer(torch.optim.Optimizer):
                         allreduce_(self._v_ref[name], average = False)
 
                     self._V[name].mul_(self._masks[name])
-                    if self._momentum == 0:
+                    if self._momentum != 0.0:
                         self._U[name].mul_(self._masks[name])
 
                     torch.cuda.synchronize()
@@ -185,7 +209,7 @@ class _DGCOptimizer(torch.optim.Optimizer):
 
                     handle = _allgather_async(compressed_idx, self._compressed_idx[name], name=name+"idx")
                     self._handles[p] = handle
-                    handle = _allgather_async(torch.mean(compressed_val), \
+                    handle = _allgather_async(compressed_mean, \
                             self._compressed_val[name], name=name+"val")
                     self._handles_val[p] = handle
                 else:
