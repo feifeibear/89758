@@ -87,6 +87,10 @@ elif args.pruning_mode == 7:
     from hvd_utils.DGCLSTMoptimizer_quant import DGCLSTMDistributedOptimizer
 elif args.pruning_mode == 8:
     from hvd_utils.DGCLSTMoptimizer_thd_quant import DGCLSTMDistributedOptimizer
+elif args.pruning_mode == 9:
+    from hvd_utils.DGCLSTMoptimizer_quant_hid import DGCLSTMDistributedOptimizer
+elif args.pruning_mode == 10:
+    from hvd_utils.DGCLSTMoptimizer_thd_quant_hid import DGCLSTMDistributedOptimizer
 
 
 # Set the random seed manually for reproducibility.

@@ -190,9 +190,6 @@ class _DGCOptimizer(torch.optim.Optimizer):
                     handle = allreduce_async_(p.grad.data, average=True, name=name)
                     self._handles[p] = handle
 
-                    torch.cuda.synchronize()
-                    self.comm_time += time.time() - begin_comm_time
-
             torch.cuda.synchronize()
             end_time = time.time()
             self.pruning_time += end_time - begin_time
