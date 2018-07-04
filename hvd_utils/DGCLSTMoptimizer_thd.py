@@ -152,13 +152,7 @@ class _DGCOptimizer(torch.optim.Optimizer):
                 p_size = np.prod(p.size())
                 if self._use_allgather and p_size > 1024:
                     param_state = self.state[p]
-                    # fjr compress grad
-                    if self._use_nesterov:
-                        self._U[name] = torch.mul(torch.add(self._U[name], p.grad.data), self._momentum)
-                        self._V[name] = self._V[name] + self._U[name] + p.grad.data
-                    else:
-                        self._U[name] = self._momentum * self._U[name] + p.grad.data
-                        self._V[name] = self._V[name] + self._U[name]
+                    self._V[name].add_(p.grad.data)
                     compressed_val = []
                     compressed_idx = []
                     #if p_size < 1000:
@@ -180,12 +174,12 @@ class _DGCOptimizer(torch.optim.Optimizer):
                         compressed_val, compressed_idx, sparsity = \
                             select_top_k_fixthd(self._V[name], param_state['mid_store'])
                         param_state['interval'] += 1
-                    masks_size = self._masks[name].size()
-                    self._masks[name].zero_()
-                    self._masks[name] = self._masks[name].view(-1)
-                    self._masks[name][compressed_idx] = 1.0
-                    self._masks[name] = 1.0 - self._masks[name]
-                    self._masks[name] = self._masks[name].view(masks_size)
+                    #masks_size = self._masks[name].size()
+                    #self._masks[name].zero_()
+                    #self._masks[name] = self._masks[name].view(-1)
+                    #self._masks[name][compressed_idx] = 1.0
+                    #self._masks[name] = 1.0 - self._masks[name]
+                    #self._masks[name] = self._masks[name].view(masks_size)
                     torch.cuda.synchronize()
                     end_select_time =  time.time()
                     self.select_time += end_select_time - begin_select_time
@@ -195,8 +189,10 @@ class _DGCOptimizer(torch.optim.Optimizer):
 
                     #self._V[name] = self._V[name] * (1 - self._masks[name])
                     #self._U[name] = self._U[name] * (1 - self._masks[name])
-                    self._V[name].mul_(self._masks[name])
-                    self._U[name].mul_(self._masks[name])
+                    V_size = self._masks[name].size()
+                    self._V[name] = self._V[name].view(-1)
+                    self._V[name][compressed_idx] = 0.0
+                    self._V[name] = self._V[name].view(V_size)
 
                     torch.cuda.synchronize()
                     begin_comm_time =  time.time()
@@ -207,8 +203,6 @@ class _DGCOptimizer(torch.optim.Optimizer):
                             torch.tensor([len(compressed_idx)]).type('torch.cuda.FloatTensor'),\
                             compressed_idx.type('torch.cuda.FloatTensor'), \
                             compressed_val])
-                    else:
-                        pass
 
                     handle = _allgather_async(compressed_msg, self._compressed_msg[name], name=name)
                     self._handles[p] = handle
@@ -217,16 +211,6 @@ class _DGCOptimizer(torch.optim.Optimizer):
                     self.comm_time += time.time() - begin_comm_time
 
                 else:
-                    p.grad.data.add_(torch.mul(p.data, self._weight_decay))
-                    if self._use_nesterov:
-                        self._U[name] = torch.mul(torch.add(self._U[name], p.grad.data), self._momentum)
-                        self._V[name] = self._V[name] + self._U[name] + p.grad.data
-                    else:
-                        self._U[name] = self._momentum * self._U[name] + p.grad.data
-                        self._V[name] = self._V[name] + self._U[name]
-                    p.grad.data = self._V[name]
-                    #compressed_msg = torch.randn(100).cuda()
-                    #handle = _allgather_async(compressed_msg, self._compressed_msg[name], name=name)
                     handle = allreduce_async_(p.grad.data, average=True, name=name)
                     self._handles[p] = handle
 

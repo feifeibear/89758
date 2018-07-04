@@ -390,7 +390,7 @@ def select_topk_truncated_mean(x, pruning_ratio):
     x_val, fine_indices = torch.topk(rough_val, top_k, 0, largest=True, sorted=False)
     x_idx = torch.index_select(rough_indices, 0, fine_indices)
 
-    return mask, x_val, x_idx
+    return x_val, x_idx
 
 def select_lowk_truncated_mean(x, pruning_ratio):
     r"""a fast function to select top k% abs largest elements, and assign indices to mask"""
@@ -423,7 +423,7 @@ def select_lowk_truncated_mean(x, pruning_ratio):
 
 
 
-def select_top_k_thd(x, pruning_ratio, mask):
+def select_top_k_thd(x, pruning_ratio):
     r"""a fast function to select top k% abs largest elements, and assign indices to mask"""
     x_size = x.size()
     x_len = 1;
@@ -453,12 +453,7 @@ def select_top_k_thd(x, pruning_ratio, mask):
 
     x_val = torch.index_select(x_flatten, 0, x_idx)
 
-    mask = mask.view(-1)
-    mask.zero_()
-    mask[x_idx] = 1.0
-    mask = 1.0 - mask
-    mask = mask.view(x_size)
-    return mask, x_val, x_idx
+    return x_val, x_idx
 
 
 def select_top_k(x, pruning_ratio, mask):

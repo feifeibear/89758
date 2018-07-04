@@ -19,7 +19,7 @@ from horovod.torch.mpi_ops import allgather, allgather_async, _allgather_async
 from horovod.torch.mpi_ops import broadcast, broadcast_async, broadcast_, broadcast_async_
 from horovod.torch.mpi_ops import poll, synchronize
 import numpy as np
-from .pruning import select_top_k_thd, select_top_k_appr, check_sparsity, select_top_k_thdv3 
+from .pruning import select_top_k_thd, select_lowk_truncated_mean, select_topk_truncated_mean
 import horovod.torch as hvd
 
 import torch
@@ -55,16 +55,12 @@ class _DGCOptimizer(torch.optim.Optimizer):
                                      in sorted(named_parameters)}
             self._U = {k: torch.zeros(v.size()).cuda() for k, v
                                      in sorted(named_parameters)}
-            self._U = {k: torch.zeros(v.size()).cuda() for k, v
-                                     in sorted(named_parameters)}
             self._masks = {k: torch.zeros(v.size()).cuda() for k, v
                                      in sorted(named_parameters)}
             self._compressed_msg = {k: torch.zeros(0).cuda() for k, v
                                  in sorted(named_parameters)}
         else:
             self._V = {k: torch.zeros(v.size()) for k, v
-                                     in sorted(named_parameters)}
-            self._U = {k: torch.zeros(v.size()) for k, v
                                      in sorted(named_parameters)}
             self._U = {k: torch.zeros(v.size()) for k, v
                                      in sorted(named_parameters)}
@@ -75,6 +71,8 @@ class _DGCOptimizer(torch.optim.Optimizer):
         self._compressed_msg_size = {k: 0 for k, v
                                  in sorted(named_parameters)}
         self._v_ref = {k: [] for k, v
+                                 in sorted(named_parameters)}
+        self._flag = {k: 0 for k, v
                                  in sorted(named_parameters)}
 
         self._handles = {}
@@ -150,31 +148,33 @@ class _DGCOptimizer(torch.optim.Optimizer):
                 p_size = np.prod(p.size())
                 if self._use_allgather and p_size > 1024:
                     # fjr compress grad
-                    if self._use_nesterov:
-                        self._U[name] = torch.mul(torch.add(self._U[name], p.grad.data), self._momentum)
-                        self._V[name] = self._V[name] + self._U[name] + p.grad.data
-                    else:
-                        self._U[name] = self._momentum * self._U[name] + p.grad.data
-                        self._V[name] = self._V[name] + self._U[name]
+                    self._V[name].add_(p.grad.data)
                     compressed_val = []
                     compressed_idx = []
-                    #if p_size < 1000:
-                    #self._masks[name], compressed_val, compressed_idx = select_top_k_appr(self._V[name], 0.001, self._masks[name])
 
                     torch.cuda.synchronize()
                     begin_select_time =  time.time()
-                    self._masks[name], compressed_val, compressed_idx = select_top_k_thd(self._V[name], 0.001, self._masks[name])
+
+                    compressed_val, compressed_idx = select_top_k_thd(self._V[name], 0.001)
                     torch.cuda.synchronize()
                     end_select_time =  time.time()
                     self.select_time += end_select_time - begin_select_time
+
                     if self._debug:
+                        masks_size = self._masks[name].size()
+                        self._masks[name].zero_()
+                        self._masks[name] = self._masks[name].view(-1)
+                        self._masks[name][compressed_idx] = 1.0
+                        self._masks[name] = 1.0 - self._masks[name]
+                        self._masks[name] = self._masks[name].view(masks_size)
                         self._v_ref[name] = self._V[name] * self._masks[name]
                         allreduce_(self._v_ref[name], average = False)
 
-                    #self._V[name] = self._V[name] * (1 - self._masks[name])
-                    #self._U[name] = self._U[name] * (1 - self._masks[name])
-                    self._V[name].mul_(self._masks[name])
-                    self._U[name].mul_(self._masks[name])
+                    #self._V[name].mul_(self._masks[name])
+                    V_size = self._masks[name].size()
+                    self._V[name] = self._V[name].view(-1)
+                    self._V[name][compressed_idx] = 0.0
+                    self._V[name] = self._V[name].view(V_size)
 
                     torch.cuda.synchronize()
                     begin_comm_time =  time.time()
@@ -187,16 +187,6 @@ class _DGCOptimizer(torch.optim.Optimizer):
                     handle = _allgather_async(compressed_msg, self._compressed_msg[name], name=name)
                     self._handles[p] = handle
                 else:
-                    p.grad.data.add_(torch.mul(p.data, self._weight_decay))
-                    if self._use_nesterov:
-                        self._U[name] = torch.mul(torch.add(self._U[name], p.grad.data), self._momentum)
-                        self._V[name] = self._V[name] + self._U[name] + p.grad.data
-                    else:
-                        self._U[name] = self._momentum * self._U[name] + p.grad.data
-                        self._V[name] = self._V[name] + self._U[name]
-                    p.grad.data = self._V[name]
-                    #compressed_msg = torch.randn(100).cuda()
-                    #handle = _allgather_async(compressed_msg, self._compressed_msg[name], name=name)
                     handle = allreduce_async_(p.grad.data, average=True, name=name)
                     self._handles[p] = handle
 

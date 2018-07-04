@@ -161,18 +161,29 @@ class _DGCOptimizer(torch.optim.Optimizer):
 
                     torch.cuda.synchronize()
                     begin_select_time =  time.time()
-                    if 'interval' not in param_state:
-                        param_state['interval'] = 1
-                    compressed_val = []
-                    compressed_idx = []
-                    if param_state['interval'] == 0:
-                        compressed_val, compressed_idx, _, _, _ = \
-                            select_bs_top(self._V[name], 0.001)
-                        param_state['interval'] = 1
+                    #if 'interval' not in param_state:
+                    #    param_state['interval'] = 1
+                    #if param_state['interval'] == 0:
+                    #    compressed_val, compressed_idx, _, _, _ = \
+                    #        select_bs_top(self._V[name], 0.001)
+                    #    param_state['interval'] = 1
+                    #else:
+                    #    compressed_val, compressed_idx, _, _, _ = \
+                    #        select_bs_bottom(self._V[name], 0.001)
+                    #    param_state['interval'] = 0
+
+                    compressed_val_top, compressed_idx_top, _, _, _ = \
+                        select_bs_top(self._V[name], 0.001)
+                    compressed_val_low, compressed_idx_low, _, _, _ = \
+                        select_bs_bottom(self._V[name], 0.001)
+                    compressed_mean = 0.0
+                    if torch.mean(compressed_val_top) > -torch.mean(compressed_val_low):
+                        compressed_val = compressed_val_top
+                        compressed_idx = compressed_idx_top
                     else:
-                        compressed_val, compressed_idx, _, _, _ = \
-                            select_bs_bottom(self._V[name], 0.001)
-                        param_state['interval'] = 0
+                        compressed_val = compressed_val_low
+                        compressed_idx = compressed_idx_low
+
 
                     masks_size = self._masks[name].size()
                     self._masks[name].zero_()
