@@ -226,7 +226,9 @@ def train(optimizer, best_val_loss):
     batch_time = AverageMeter()
     pruning_time = AverageMeter()
     select_time = AverageMeter()
-    comm_time = AverageMeter()
+    mask_time = AverageMeter()
+    pack_time = AverageMeter()
+    unpack_time = AverageMeter()
 
     end = time.time()
     for batch, i in enumerate(range(0, T_dim_size//hvd.size(), args.bptt)):
@@ -246,15 +248,20 @@ def train(optimizer, best_val_loss):
             optimizer.synchronize()
             torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip)
 
+        optimizer.step()
+
         if args.use_pruning:
             pruning_time.update(optimizer.pruning_time)
             select_time.update(optimizer.select_time)
-            comm_time.update(optimizer.comm_time)
+            mask_time.update(optimizer.mask_time)
+            pack_time.update(optimizer.pack_time)
+            unpack_time.update(optimizer.unpack_time)
             optimizer.pruning_time = 0.0
             optimizer.select_time = 0.0
-            optimizer.comm_time = 0.0
+            optimizer.mask_time = 0.0
+            optimizer.pack_time = 0.0
+            optimizer.unpack_time = 0.0
 
-        optimizer.step()
         # for p in model.parameters():
         #     p.data.add_(-lr, p.grad.data)
 
@@ -269,11 +276,21 @@ def train(optimizer, best_val_loss):
             if hvd.rank() == 0:
                 logging.info('| epoch {:3d} | {:5d}/{:5d} batches | lr {:02.2f} | ms/batch {:5.2f} | '
                         'loss {:5.2f} | ppl {:8.2f} | '
-                        'Time {:.3f} | pruning time {:.3f} | select time {:3f} | '
-                        'comm time {:3f}'.format(
-                    epoch, batch, len(train_data) // args.bptt, lr,
-                    elapsed * 1000 / args.log_interval, cur_loss, math.exp(cur_loss),
-                        batch_time.val, pruning_time.val, select_time.val, comm_time.val))
+                        'Time {:.3f} '
+                        'pruning_time {:8.4f} '
+                        'select_time {:8.4f} '
+                        'mask_time {:8.4f} '
+                        'pack_time {:8.4f} '
+                        'unpack_time {:8.4f}'.format(
+                        epoch, batch, len(train_data) // args.bptt, lr,
+                        elapsed * 1000 / args.log_interval, cur_loss, math.exp(cur_loss),
+                        batch_time.val,
+                        pruning_time.val,
+                        select_time.val,
+                        mask_time.val,
+                        pack_time.val,
+                        unpack_time.val
+                        ))
             total_loss = 0
             start_time = time.time()
 

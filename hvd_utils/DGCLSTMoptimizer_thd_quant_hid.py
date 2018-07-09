@@ -83,7 +83,9 @@ class _DGCOptimizer(torch.optim.Optimizer):
 
         self.pruning_time = 0.0
         self.select_time = 0.0
-        self.comm_time = 0.0
+        self.pack_time = 0.0
+        self.unpack_time = 0.0
+        self.mask_time = 0.0
 
     def synchronize(self):
         for p in self._handles:
@@ -92,9 +94,9 @@ class _DGCOptimizer(torch.optim.Optimizer):
             p_size = np.prod(p.size())
             begin_time = time.time()
 
-            torch.cuda.synchronize()
-            begin_comm_time =  time.time()
             if self._use_allgather and p_size > 1024:
+                torch.cuda.synchronize()
+                begin_unpack_time =  time.time()
                 #fjr decompress
                 if p_size < 1500 * 10000:
                     handle = self._handles_val[p]
@@ -128,10 +130,12 @@ class _DGCOptimizer(torch.optim.Optimizer):
                 if self._debug:
                     print("diff : ", torch.sum(self._v_ref[name] - p.grad.data))
 
+                torch.cuda.synchronize()
+                self.unpack_time += time.time() - begin_unpack_time
+
             torch.cuda.synchronize()
             end_time = time.time()
             self.pruning_time += end_time - begin_time
-            self.comm_time += time.time() - begin_comm_time
 
         self._handles.clear()
         self._handles_val.clear()
@@ -191,13 +195,16 @@ class _DGCOptimizer(torch.optim.Optimizer):
                         self._v_ref[name] = self._V[name] * (1.0 - self._masks[name])
                         allreduce_(self._v_ref[name], average = False)
 
+                    torch.cuda.synchronize()
+                    begin_mask_time =  time.time()
                     V_size = self._masks[name].size()
                     self._V[name] = self._V[name].view(-1)
                     self._V[name][compressed_idx] = 0.0
                     self._V[name] = self._V[name].view(V_size)
 
                     torch.cuda.synchronize()
-                    begin_comm_time =  time.time()
+                    self.mask_time += time.time() - begin_mask_time
+                    begin_pack_time =  time.time()
 
                     self._compressed_msg_size[name] = len(compressed_idx)
                     if self._use_gpu:
@@ -220,7 +227,7 @@ class _DGCOptimizer(torch.optim.Optimizer):
                         self._handles_val[p] = handle
 
                     torch.cuda.synchronize()
-                    self.comm_time += time.time() - begin_comm_time
+                    self.pack_time += time.time() - begin_pack_time
 
                 else:
                     handle = allreduce_async_(p.grad.data, average=True, name=name)
